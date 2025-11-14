@@ -2,22 +2,37 @@
 import * as admin from 'firebase-admin';
 
 // Inicialización de Firebase Admin SDK
-let bucket: any; // Usamos 'any' para evitar dramas de TS
+let bucket: any;
 
 try {
-  const serviceAccount = require('./firebase-service-account.json');
+  let serviceAccount: any;
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    // Para Render (env var)
+    console.log('Cargando desde env var (Render)');
+    const serviceAccountString = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+    if (!serviceAccountString) {
+      throw new Error('Falta FIREBASE_SERVICE_ACCOUNT_JSON en env');
+    }
+    serviceAccount = JSON.parse(serviceAccountString);
+    console.log('Service account cargado OK desde env. Project ID:', serviceAccount.project_id);
+  } else {
+    // Para local (archivo JSON)
+    console.log('Cargando desde archivo local');
+    serviceAccount = require('./firebase-service-account.json');
+    console.log('Service account cargado OK. Project ID:', serviceAccount.project_id);
+  }
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    storageBucket: 'joseangel-5dfd2.firebasestorage.app' // Tu bucket
+    storageBucket: 'joseangel-5dfd2.firebasestorage.app' // Confirma en console si es .appspot.com
   });
 
   bucket = admin.storage().bucket();
-  console.log('Firebase Admin SDK inicializado correctamente');
+  console.log('Firebase Admin SDK inicializado correctamente. Bucket:', bucket.name);
 } catch (error: any) {
-  console.warn('ADVERTENCIA: No se pudo inicializar Firebase Admin SDK.');
-  console.warn('Esto es normal en desarrollo si firebase-service-account.json no existe.');
-  console.warn('Error:', error.message);
+  console.error('ERROR en inicialización de Firebase:', error.message);
+  console.error('Stack:', error.stack);
+  bucket = undefined;
 }
 
 // Exporta el bucket
