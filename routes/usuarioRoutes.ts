@@ -18,7 +18,41 @@ router.get('/', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+// ... (después de tus rutas GET)
 
+// =================================================================
+// --- ¡NUEVA RUTA DE VALIDACIÓN! ---
+// =================================================================
+// Esta ruta comprueba si un email O un nombre de usuario ya existen en CUALQUIER restaurante.
+router.post('/check-availability', async (req, res) => {
+  try {
+    const { email, nombreusuario } = req.body;
+
+    if (email) {
+      // Usamos 'findOne' para buscar en toda la colección.
+      const emailExists = await Usuario.findOne({ email: email.toLowerCase() });
+      if (emailExists) {
+        // 409 Conflict - Es un error de duplicado
+        return res.status(409).json({ error: 'El email ya está en uso. Por favor, elige otro.' });
+      }
+    }
+
+    if (nombreusuario) {
+      const userExists = await Usuario.findOne({ nombreusuario: nombreusuario.toLowerCase() });
+      if (userExists) {
+        return res.status(409).json({ error: 'El nombre de usuario ya está en uso. Por favor, elige otro.' });
+      }
+    }
+
+    // Si llegamos aquí, ambos están disponibles
+    res.status(200).json({ message: 'Disponible' });
+
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ... (El resto de tus rutas, como /login, /forgot-password, etc.)
 // Obtener uno
 router.get('/:id', async (req, res) => {
   try {
