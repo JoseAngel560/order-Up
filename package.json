@@ -42,6 +42,7 @@
     "@types/moment": "^2.11.29",
     "@types/multer": "^2.0.0",
     "@types/node": "^20.11.30",
+    "@types/nodemailer": "^7.0.3",
     "@types/pdfkit": "^0.17.3",
     "@types/uuid": "^10.0.0",
     "nodemon": "^3.0.2",
