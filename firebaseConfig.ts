@@ -14,6 +14,10 @@ try {
       throw new Error('Falta FIREBASE_SERVICE_ACCOUNT_JSON en env');
     }
     serviceAccount = JSON.parse(serviceAccountString);
+    // --- FIX: Reemplaza \\n con \n para PEM válido ---
+    if (serviceAccount.private_key) {
+      serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
+    }
     console.log('Service account cargado OK desde env. Project ID:', serviceAccount.project_id);
   } else {
     // Para local (archivo JSON)
@@ -24,7 +28,7 @@ try {
 
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
-    storageBucket: 'joseangel-5dfd2.firebasestorage.app' // Confirma en console si es .appspot.com
+    storageBucket: 'joseangel-5dfd2.firebasestorage.app' // Confirma si es .appspot.com
   });
 
   bucket = admin.storage().bucket();
