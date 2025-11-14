@@ -1,13 +1,13 @@
 import mongoose, { Schema, Document } from 'mongoose';
 
 export interface IReservacion extends Document {
-  mesa_id: Schema.Types.ObjectId; // El ID de la mesa que se reserva
+  mesa_id: Schema.Types.ObjectId;
   restaurante_id: Schema.Types.ObjectId;
   fecha: string; // "YYYY-MM-DD"
   hora: string; // "HH:MM"
   nombre_cliente?: string;
   telefono?: string;
-  estado: 'Pendiente' | 'Confirmada' | 'Cancelada'; // Estado de la *reservación*
+  estado: 'Pendiente' | 'Confirmada' | 'Cancelada';
 }
 
 const ReservacionSchema: Schema = new Schema({
@@ -22,5 +22,13 @@ const ReservacionSchema: Schema = new Schema({
 
 // Índice para buscar reservaciones por restaurante y fecha rápidamente
 ReservacionSchema.index({ restaurante_id: 1, fecha: 1 });
+
+// --- CAMBIO: Se añade un índice para evitar doble-booking ---
+// No puede haber dos reservaciones 'Pendientes' para la misma mesa, mismo restaurante, mismo día y misma hora.
+ReservacionSchema.index(
+  { restaurante_id: 1, mesa_id: 1, fecha: 1, hora: 1, estado: 1 }, 
+  { unique: true, partialFilterExpression: { estado: 'Pendiente' } }
+);
+// --- FIN CAMBIO ---
 
 export default mongoose.model<IReservacion>('Reservacion', ReservacionSchema);
