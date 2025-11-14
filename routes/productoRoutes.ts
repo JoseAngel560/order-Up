@@ -1,26 +1,47 @@
 // food-backend/routes/productoRoutes.ts
-import { Router, Request } from 'express'; // <-- AÑADIDO: 'Request'
+import { Router, Request, Response } from 'express';
+import { ParamsDictionary } from 'express-serve-static-core';
 import Producto from '../models/Producto';
-import Notification from '../models/Notification'; // <-- AÑADIDO: Modelo de Notificación
+import Notification from '../models/Notification';
 import multer from 'multer';
-import path from 'path';
+import { bucket } from '../firebaseConfig'; // Import simple
 
 const router = Router();
 
-// --- CONFIGURACIÓN MEJORADA DE MULTER (sin cambios) ---
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, 'uploads/');
-    },
-    filename: (req, file, cb) => {
-        cb(null, `${Date.now()}-${file.originalname}`);
-    }
+// --- CONFIGURACIÓN DE MULTER EN MEMORIA (para Firebase) ---
+const storage = multer.memoryStorage();
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB max
 });
 
-const upload = multer({ storage: storage });
+// FIX: Tipo correcto para el archivo de multer
+type MulterFile = Express.Multer.File;
 
-// --- RUTAS GET (ACTUALIZADAS) ---
-router.get('/', async (req, res) => {
+// Función helper para subir a Firebase (simple, sin tipos locos)
+async function uploadToFirebase(file: MulterFile): Promise<string | null> {
+  if (!bucket) {
+    throw new Error('Firebase no inicializado');
+  }
+
+  const fileName = `productos/${Date.now()}-${file.originalname}`;
+  const fileUpload = bucket.file(fileName);
+
+  await fileUpload.save(file.buffer, {
+    metadata: {
+      contentType: file.mimetype,
+      cacheControl: 'public, max-age=31536000'
+    }
+  });
+
+  await fileUpload.makePublic();
+
+  const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+  return publicUrl;
+}
+
+// --- RUTAS GET (iguales) ---
+router.get('/', async (req: Request<ParamsDictionary, any, any>, res: Response) => {
     try {
         const { restaurante_id } = req.query;
         if (!restaurante_id) {
@@ -35,8 +56,7 @@ router.get('/', async (req, res) => {
     }
 });
 
-// --- NUEVA RUTA: Listar productos por restaurante (para convertProducts en frontend) ---
-router.get('/restaurante/:id', async (req, res) => {
+router.get('/restaurante/:id', async (req: Request<ParamsDictionary, any, any>, res: Response) => {
     try {
         const { id } = req.params;
         const list = await Producto.find({ restaurante_id: id })
@@ -48,7 +68,7 @@ router.get('/restaurante/:id', async (req, res) => {
     }
 });
 
-router.get('/:id', async (req, res) => {
+router.get('/:id', async (req: Request<ParamsDictionary, any, any>, res: Response) => {
     try {
         const { restaurante_id } = req.query;
         if (!restaurante_id) {
@@ -65,8 +85,8 @@ router.get('/:id', async (req, res) => {
     }
 });
 
-// --- RUTA CREAR (POST) (ACTUALIZADA PARA MONEDA) ---
-router.post('/', upload.single('imagen'), async (req, res) => {
+// --- POST CON FIREBASE ---
+router.post('/', upload.single('imagen'), async (req: Request<ParamsDictionary, any, any>, res: Response) => {
     try {
         const { producto_id, nombre, descripcion, categoria, precio, disponible, restaurante_id, moneda } = req.body;
 
@@ -76,13 +96,13 @@ router.post('/', upload.single('imagen'), async (req, res) => {
         
         let imagenURL = null;
         if (req.file) {
-            const serverAddress = `${req.protocol}://${req.get('host')}`;
-            imagenURL = `${serverAddress}/uploads/${req.file.filename}`;
+            imagenURL = await uploadToFirebase(req.file as MulterFile); // FIX: Cast correcto
+            console.log('Imagen subida a Firebase:', imagenURL);
         }
 
         const doc = new Producto({ 
             producto_id, nombre, descripcion, categoria, precio, disponible, imagenURL, 
-            restaurante_id, moneda: moneda || 'NIO' // Default a NIO si no se envía
+            restaurante_id, moneda: moneda || 'NIO'
         });
         const saved = await doc.save();
         const populated = await Producto.findById(saved._id).populate('restaurante_id');
@@ -92,59 +112,50 @@ router.post('/', upload.single('imagen'), async (req, res) => {
     }
 });
 
-
-// ===============================================
-// --- RUTA ACTUALIZAR (PUT) (MODIFICADA PARA MONEDA) ---
-// ===============================================
-router.put('/:id', upload.single('imagen'), async (req: Request, res) => { // <-- AÑADIDO 'Request'
+// --- PUT CON FIREBASE ---
+router.put('/:id', upload.single('imagen'), async (req: Request<ParamsDictionary, any, any>, res: Response) => {
     try {
-        // --- 1. Obtener estado anterior ---
         const productoAnterior = await Producto.findById(req.params.id);
         if (!productoAnterior) {
             return res.status(404).json({ error: 'Producto no encontrado' });
         }
         const precioAnterior = productoAnterior.precio;
         const disponibleAnterior = productoAnterior.disponible;
-        const restauranteId = productoAnterior.restaurante_id; // Para el socket
+        const restauranteId = productoAnterior.restaurante_id;
 
-        // --- 2. Preparar actualización (Tu lógica + soporte para moneda) ---
         const body = { ...req.body };
         if (req.file) {
-            const serverAddress = `${req.protocol}://${req.get('host')}`;
-            body.imagenURL = `${serverAddress}/uploads/${req.file.filename}`;
+            const nuevaImagenURL = await uploadToFirebase(req.file as MulterFile); // FIX: Cast correcto
+            body.imagenURL = nuevaImagenURL;
+            console.log('Nueva imagen subida a Firebase:', nuevaImagenURL);
         }
-        // Soporte explícito para moneda si se envía
         if (body.moneda) {
-            body.moneda = body.moneda; // Ya está en body, pero valida enum si quieres
+            body.moneda = body.moneda;
         }
 
-        // --- 3. Actualizar (Tu lógica) ---
         const updated = await Producto.findByIdAndUpdate(req.params.id, body, { new: true, runValidators: true }).populate('restaurante_id');
         if (!updated) {
             return res.status(404).json({ error: 'Producto no encontrado' });
         }
 
-        // --- 4. AÑADIDO: Lógica de Notificación ---
+        // Lógica de Notificación
         try {
             const io = (req as any).io;
             let notifMensaje = '';
             const nuevoPrecio = updated.precio;
             const nuevoDisponible = updated.disponible;
 
-            // Chequeo 1: ¿Cambió el precio?
             if (precioAnterior !== nuevoPrecio) {
                 notifMensaje = `El precio de '${updated.nombre}' cambió a C$ ${nuevoPrecio.toFixed(2)}.`;
             } 
-            // Chequeo 2: ¿Cambió la disponibilidad?
             else if (disponibleAnterior !== nuevoDisponible) {
                 notifMensaje = `El producto '${updated.nombre}' ahora está ${nuevoDisponible ? 'Disponible' : 'Agotado'}.`;
             }
 
-            // Si generamos un mensaje, creamos y emitimos la notificación
             if (notifMensaje && io) {
                 const notif = new Notification({
                     mensaje: notifMensaje,
-                    tipo: 'inventario', // Tipo 'inventario'
+                    tipo: 'inventario',
                     restaurante_id: restauranteId
                 });
                 await notif.save();
@@ -152,9 +163,8 @@ router.put('/:id', upload.single('imagen'), async (req: Request, res) => { // <-
                 console.log(`Notificación de producto emitida: ${notifMensaje}`);
             }
         } catch (notifError) {
-            console.error("Error creando/emitiendo notificación de producto:", notifError);
+            console.error("Error en notificación:", notifError);
         }
-        // --- FIN: Lógica de Notificación ---
 
         res.json(updated);
     } catch (err: any) {
@@ -162,8 +172,8 @@ router.put('/:id', upload.single('imagen'), async (req: Request, res) => { // <-
     }
 });
 
-// --- RUTA DELETE (sin cambios) ---
-router.delete('/:id', async (req, res) => {
+// --- DELETE (igual) ---
+router.delete('/:id', async (req: Request<ParamsDictionary, any, any>, res: Response) => {
     try {
         const deleted = await Producto.findByIdAndDelete(req.params.id);
         if (!deleted) return res.status(404).json({ error: 'Producto no encontrado' });
@@ -173,18 +183,14 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
-
-// =================================================================
-// --- RUTA PATCH (MODIFICADA) ---
-// =================================================================
-router.patch('/:id/disponible', async (req: Request, res) => { // <-- AÑADIDO 'Request'
+// --- PATCH (igual) ---
+router.patch('/:id/disponible', async (req: Request<ParamsDictionary, any, any>, res: Response) => {
     try {
         const { disponible } = req.body; 
         if (typeof disponible !== 'boolean') {
             return res.status(400).json({ error: 'El estado "disponible" (true/false) es requerido.' });
         }
 
-        // --- 1. Obtener estado anterior ---
         const productoAnterior = await Producto.findById(req.params.id);
         if (!productoAnterior) {
             return res.status(404).json({ error: 'Producto no encontrado' });
@@ -192,7 +198,6 @@ router.patch('/:id/disponible', async (req: Request, res) => { // <-- AÑADIDO '
         const disponibleAnterior = productoAnterior.disponible;
         const restauranteId = productoAnterior.restaurante_id;
 
-        // --- 2. Actualizar ---
         const updated = await Producto.findByIdAndUpdate(
             req.params.id,
             { disponible: disponible }, 
@@ -203,12 +208,11 @@ router.patch('/:id/disponible', async (req: Request, res) => { // <-- AÑADIDO '
             return res.status(404).json({ error: 'Producto no encontrado' });
         }
 
-        // --- 3. AÑADIDO: Lógica de Notificación ---
+        // Lógica de Notificación
         try {
             const io = (req as any).io;
             let notifMensaje = '';
 
-            // Chequear si la disponibilidad realmente cambió
             if (disponibleAnterior !== updated.disponible) {
                 notifMensaje = `El producto '${updated.nombre}' ahora está ${updated.disponible ? 'Disponible' : 'Agotado'}.`;
             }
@@ -224,17 +228,13 @@ router.patch('/:id/disponible', async (req: Request, res) => { // <-- AÑADIDO '
                 console.log(`Notificación de producto emitida: ${notifMensaje}`);
             }
         } catch (notifError) {
-            console.error("Error creando/emitiendo notificación de producto:", notifError);
+            console.error("Error en notificación:", notifError);
         }
-        // --- FIN: Lógica de Notificación ---
 
-        res.json(updated); // Devuelve el producto actualizado
+        res.json(updated);
     } catch (err: any) {
         res.status(400).json({ error: err.message });
     }
 });
-// =================================================================
-// --- FIN DE LA CORRECCIÓN ---
-// =================================================================
 
 export default router;
